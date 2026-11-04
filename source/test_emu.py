@@ -12,7 +12,7 @@ def parse(b):
     for _ in range(n):
         l=b[o]; out.append(b[o+1:o+1+l].decode('mac_roman')); o+=1+l
     return out, o
-def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True):
+def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701):
     uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
     uc.ctl_set_cpu_model(UC_CPU_M68K_M68000)
     uc.mem_map(0, 0x100000)
@@ -20,6 +20,7 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
     uc.mem_write(CODE, code)
     uc.mem_write(RET, b'\x4e\x71'*4)
     uc.mem_write(0x838, struct.pack('>HH', *pin))
+    uc.mem_write(0x15A, struct.pack('>H', sysver))       # SysVersion
     uc.mem_write(0x118, struct.pack('>I', 0xAAAA0000))   # TheZone (app)
     uc.mem_write(0x2A6, struct.pack('>I', 0x00002000))   # SysZone
     data = strlist(names)
@@ -58,6 +59,7 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
                 uc.mem_write(a7+6, struct.pack('>I', h))
                 uc.reg_write(UC_M68K_REG_A7, a7+6)
             elif op == 0xA1AD:
+                assert sysver >= 0x0604, 'Gestalt called on System %x (bomb ID 12)' % sysver
                 sel = struct.pack('>I', d0in)
                 if not gestalt_ok: uc.reg_write(UC_M68K_REG_D0, (-5551) & 0xFFFFFFFF)
                 else:
@@ -138,4 +140,10 @@ check('Icon: no picture on file, clean exit', st['icon'] == st['old_icon'] and n
 check('Icon: picture too small, untouched', st['icon'] == st['old_icon'])
 (names, used), st, guard, n0 = run(NAMES, have_res=False)
 check('Icon: name list missing, picture still replaced', st['icon'] == LISA)
+for v in (0x0602, 0x0603):
+    (names, used), st, guard, n0 = run(NAMES, sysver=v)
+    check('System %d.%d.%d: no Gestalt call, picture untouched, name still changed' % (v>>8, (v>>4)&15, v&15),
+          '0xa1ad' not in st['traps'] and st['icon'] == st['old_icon'] and names == exp)
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0604)
+check('System 6.0.4: Gestalt used, picture replaced', '0xa1ad' in st['traps'] and st['icon'] == LISA)
 print('ALL PASS' if ok else 'FAILURES'); sys.exit(0 if ok else 1)

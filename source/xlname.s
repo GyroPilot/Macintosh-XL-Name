@@ -1,4 +1,6 @@
-| Macintosh XL Name  -  REV B  -  Oct 5 2026  -  GyroPilot
+| Macintosh XL Name  -  REV C  -  Nov 4 2026  -  GyroPilot
+| REV C: no Gestalt call on System 6.0.3 and older, where the trap does not
+| exist (System error ID 12 at startup on an XL under 6.0.2 / 6.0.3).
 | TEST B (--defsym TESTB=1, linked with glue.s and nbp.c): TEST BUILD plus a
 | network re-announce of the model name and a log file on the startup disk.
 | TEST BUILD (assemble with --defsym TESTBUILD=1): for trying the mechanism on
@@ -50,6 +52,8 @@ exit:
 | =====================================================================
 do_name:
         .ifdef TESTBUILD
+        cmpi.w  #0x0604,0x015A.w        | SysVersion: Gestalt came with 6.0.4
+        bcs     done
         move.l  #0x6D616368,%d0         | 'mach'
         .short  0xA1AD                  | _Gestalt
         tst.w   %d0
@@ -178,6 +182,8 @@ done:
 | Overwrite the machine picture with the Lisa icon
 | =====================================================================
 do_icon:
+        cmpi.w  #0x0604,0x015A.w        | SysVersion: Gestalt came with 6.0.4
+        bcs.s   idone
         .ifndef TESTBUILD
         move.l  #0x6D616368,%d0         | 'mach'
         .short  0xA1AD                  | _Gestalt

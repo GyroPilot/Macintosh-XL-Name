@@ -1,4 +1,4 @@
-Macintosh XL Name 1.0  (REV B, October 5 2026)
+Macintosh XL Name 1.0  (REV C, November 4 2026)
 by GyroPilot - github.com/GyroPilot
 
 WHAT IT DOES
@@ -24,6 +24,6 @@ The Lisa picture is drawn for the standard Lisa screen, where dots are taller th
 IF THE NETWORK NAME DOES NOT CHANGE
 Check About This Macintosh first. If it says "Macintosh XL" the extension is working, and the network name was registered before the extension loaded. Please report this, with your System version, at github.com/GyroPilot.
 
-REV B adds the Lisa picture. REV A changed the name only.
+REV C fixes a startup crash (System error ID 12) on a Lisa running System 6.0.2 or 6.0.3. REV B adds the Lisa picture. REV A changed the name only.
 
 This is the first release. It has been tested in a 68000 emulator, and is waiting for confirmation on real Lisa hardware.

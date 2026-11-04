@@ -1,10 +1,13 @@
-# Macintosh XL Name 1.0 (REV B, Oct 5 2026)
+# Macintosh XL Name 1.0 (REV C, Nov 4 2026)
 
 A System 7 extension for an Apple Lisa running MacWorks Plus / MacWorks Plus II.
 MacWorks runs Macintosh Plus ROM code, so System 7 calls the machine a
 "Macintosh Plus". This extension changes that name to **Macintosh XL** and
 replaces the compact-Mac picture in About This Macintosh with a Lisa.
 
+- **REV C** (Nov 4 2026): no Gestalt call before System 6.0.4. REV B stopped an XL
+  at startup with System error ID 12 under 6.0.2 and 6.0.3, where the Gestalt trap
+  does not exist. REV C reads the System version (low-memory `SysVersion`, $15A) first.
 - **REV B** (Oct 5 2026): adds the Lisa picture (icon A1, in `icon/`).
 - **REV A** (Oct 5 2026): first build, name only.
 
@@ -18,9 +21,9 @@ real copy of System 7.
 
 | File | What it is |
 |---|---|
-| `MacintoshXLName_1_0_REVB.dc42` | 400K floppy image (Disk Copy 4.2) holding the extension and a Read Me. Use this on the Lisa. |
-| `MacintoshXLName_1_0_REVB.dsk` | The same disk as a raw 400K image (Mini vMac and similar). |
-| `MacintoshXLName_1_0_REVB.bin` | The extension alone, as a MacBinary II file. |
+| `MacintoshXLName_1_0_REVC.dc42` | 400K floppy image (Disk Copy 4.2) holding the extension and a Read Me. Use this on the Lisa. |
+| `MacintoshXLName_1_0_REVC.dsk` | The same disk as a raw 400K image (Mini vMac and similar). |
+| `MacintoshXLName_1_0_REVC.bin` | The extension alone, as a MacBinary II file. |
 | `source/` | `xlname.s` (68000 assembly), `build.py`, `test_emu.py`, `README_MAC.txt`. |
 | `icon/` | The approved Lisa icon A1: PNG, mask, pixel grid, icon data, drawing scripts. |
 
@@ -77,12 +80,16 @@ the six Toolbox calls it makes stubbed out. Cases: Lisa 720 x 364, Lisa
 608 x 431, real Plus screen, Plus entry last in the list, a shorter "Mac Plus"
 entry, no Plus entry, list missing, empty list; and for the picture: replaced on a
 Lisa, untouched on a real Plus screen, untouched when the machine type is not
-Plus, Gestalt unavailable, picture missing, picture too small. All pass; registers, stack and
+Plus, Gestalt unavailable, picture missing, picture too small; System 6.0.2 and 6.0.3 (no Gestalt call), 6.0.4 (Gestalt used). All pass; registers, stack and
 the memory zone are restored and nothing is written past the list.
 
 ## Build
 
     m68k-linux-gnu-as -m68000 -o xlname.o xlname.s
-    m68k-linux-gnu-objcopy -O binary -j .text xlname.o xlname_code.bin
+    m68k-linux-gnu-ld -nostdlib -Ttext=0 -e start -o xlname.elf xlname.o
+    m68k-linux-gnu-objcopy -O binary -j .text xlname.elf xlname_code.bin
+
+(On moof, Retro68's m68k-apple-macos-as/ld/objcopy. The link step matters there:
+without it the `lea newname(%pc)` displacement is left as 0.)
     python3 test_emu.py
     python3 build.py        (needs: pip install machfs)
