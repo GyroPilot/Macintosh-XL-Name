@@ -4,3 +4,4 @@ __pycache__/
 *.elf
 source/XLName.rsrc
 revb_backup/
+share/
