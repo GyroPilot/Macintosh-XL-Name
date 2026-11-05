@@ -12,7 +12,7 @@ def parse(b):
     for _ in range(n):
         l=b[o]; out.append(b[o+1:o+1+l].decode('mac_roman')); o+=1+l
     return out, o
-def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701):
+def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701, app_first=False, stuck=False, calls=2):
     uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
     uc.ctl_set_cpu_model(UC_CPU_M68K_M68000)
     uc.mem_map(0, 0x100000)
@@ -31,63 +31,124 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
     OLDICON = bytes(range(256))
     uc.mem_write(IDATA, OLDICON + b'\xEE'*32); uc.mem_write(IMP, struct.pack('>I', IDATA))
     st['zone_at_icon'] = None
+    SYSZ, APPZ = 0x00002000, 0xAAAA0000
+    hz = {MP: APPZ if app_first else SYSZ, IMP: APPZ if app_first else SYSZ}
+    FMP, FDATA, FIMP, FIDATA = 0x30020, 0x44000, 0x30030, 0x54000     # fresh copies, as after an app launch
+    uc.mem_write(FDATA, data + b'\xEE'*64); uc.mem_write(FMP, struct.pack('>I', FDATA))
+    uc.mem_write(FIDATA, OLDICON + b'\xEE'*32); uc.mem_write(FIMP, struct.pack('>I', FIDATA))
+    hz[FMP] = hz[FIMP] = APPZ
+    sizes = {MP: len(data), IMP: icon_size, FMP: len(data), FIMP: icon_size}
+    st['fresh'] = {(0x53545223, -16395): FMP if have_res else 0, (0x49434E23, micn): FIMP if have_icon else 0}
+    nop = set()
+    st['released'] = []
     regs0 = {}
     for i,r in enumerate([UC_M68K_REG_D3,UC_M68K_REG_D4,UC_M68K_REG_D5,UC_M68K_REG_D6,UC_M68K_REG_D7,UC_M68K_REG_A2,UC_M68K_REG_A3,UC_M68K_REG_A4]):
         uc.reg_write(r, 0x11110000+i); regs0[r]=0x11110000+i
     sp = STACK - 4
     uc.mem_write(sp, struct.pack('>I', RET))
     uc.reg_write(UC_M68K_REG_A7, sp)
-    pc = CODE; steps = 0
-    while pc != RET:
-        steps += 1
-        assert steps < 5000, 'runaway'
-        op = struct.unpack('>H', uc.mem_read(pc,2))[0]
-        if op & 0xF000 == 0xA000:
-            st['traps'].append(hex(op))
-            a7 = uc.reg_read(UC_M68K_REG_A7)
-            a0in = uc.reg_read(UC_M68K_REG_A0); a1in = uc.reg_read(UC_M68K_REG_A1); d0in = uc.reg_read(UC_M68K_REG_D0)
-            for r in (UC_M68K_REG_A0,UC_M68K_REG_A1,UC_M68K_REG_D1,UC_M68K_REG_D2): uc.reg_write(r, 0xDEADBEEE)
-            if op == 0xA9A0:
-                rid, typ = struct.unpack('>hI', uc.mem_read(a7,6))
-                zone = struct.unpack('>I', uc.mem_read(0x118,4))[0]
-                if typ == 0x53545223:
-                    assert rid == -16395, rid
-                    st['zone_at_get'] = zone; h = MP if have_res else 0
-                else:
-                    assert typ == 0x49434E23 and rid == micn, (hex(typ), rid)
-                    st['zone_at_icon'] = zone; h = IMP if have_icon else 0
-                uc.mem_write(a7+6, struct.pack('>I', h))
-                uc.reg_write(UC_M68K_REG_A7, a7+6)
-            elif op == 0xA1AD:
-                assert sysver >= 0x0604, 'Gestalt called on System %x (bomb ID 12)' % sysver
-                sel = struct.pack('>I', d0in)
-                if not gestalt_ok: uc.reg_write(UC_M68K_REG_D0, (-5551) & 0xFFFFFFFF)
-                else:
-                    assert sel in (b'mach', b'micn'), sel
-                    uc.reg_write(UC_M68K_REG_A0, (mach if sel==b'mach' else micn) & 0xFFFFFFFF); uc.reg_write(UC_M68K_REG_D0, 0)
-            elif op == 0xA025:
-                assert a0in in (MP, IMP)
-                uc.reg_write(UC_M68K_REG_D0, st['size'] if a0in == MP else icon_size)
-            elif op == 0xA024:
-                assert a0in == MP
-                st['size'] = d0in; uc.reg_write(UC_M68K_REG_D0, 0)
-            elif op == 0xA02E:
-                s,d,n = a0in,a1in,d0in
-                assert 0 <= n < 4096
-                buf = bytes(uc.mem_read(s,n)); uc.mem_write(d,buf)
-                uc.reg_write(UC_M68K_REG_D0, 0)
-            elif op == 0xA04A:
-                assert a0in in (MP, IMP); st['nopurge' if a0in == MP else 'icon_nopurge'] = True
-            else: raise Exception('unexpected trap '+hex(op))
-            pc += 2; uc.reg_write(UC_M68K_REG_PC, pc); continue
-        try: uc.emu_start(pc, 0xFFFFFFFF, count=1)
-        except Exception as e: raise Exception("at pc %x op %04x: %s" % (pc-CODE, op, e))
-        pc = uc.reg_read(UC_M68K_REG_PC)
+    OLDGR, RES = 0x7E000, 0x60000
+    st['gr_calls'] = 0
+    def execute(pc, stop):
+      steps = 0
+      while pc != stop:
+          steps += 1
+          assert steps < 20000, 'runaway'
+          if pc == OLDGR:                     # the real GetResource, called by the patch
+              a7 = uc.reg_read(UC_M68K_REG_A7)
+              ret, rid, typ = struct.unpack('>IhI', uc.mem_read(a7, 10))
+              st['gr_calls'] += 1
+              h = st['fresh'].get((typ, rid), 0)
+              uc.mem_write(a7+10, struct.pack('>I', h))
+              uc.reg_write(UC_M68K_REG_A7, a7+10)
+              for r in (UC_M68K_REG_A0,UC_M68K_REG_A1,UC_M68K_REG_D0,UC_M68K_REG_D1,UC_M68K_REG_D2): uc.reg_write(r, 0xDEADBEEE)
+              pc = ret; uc.reg_write(UC_M68K_REG_PC, pc); continue
+          op = struct.unpack('>H', uc.mem_read(pc,2))[0]
+          if op & 0xF000 == 0xA000:
+              st['traps'].append(hex(op))
+              a7 = uc.reg_read(UC_M68K_REG_A7)
+              a0in = uc.reg_read(UC_M68K_REG_A0); a1in = uc.reg_read(UC_M68K_REG_A1); d0in = uc.reg_read(UC_M68K_REG_D0)
+              for r in (UC_M68K_REG_A0,UC_M68K_REG_A1,UC_M68K_REG_D1,UC_M68K_REG_D2): uc.reg_write(r, 0xDEADBEEE)
+              if op == 0xA9A0:
+                  rid, typ = struct.unpack('>hI', uc.mem_read(a7,6))
+                  zone = struct.unpack('>I', uc.mem_read(0x118,4))[0]
+                  if typ == 0x53545223:
+                      assert rid == -16395, rid
+                      st['zone_at_get'] = zone; h = MP if have_res else 0
+                  else:
+                      assert typ == 0x49434E23 and rid == micn, (hex(typ), rid)
+                      st['zone_at_icon'] = zone; h = IMP if have_icon else 0
+                  uc.mem_write(a7+6, struct.pack('>I', h))
+                  uc.reg_write(UC_M68K_REG_A7, a7+6)
+              elif op == 0xA51E:                      # NewPtr,SYS
+                  st['resident'] = (RES, d0in); uc.reg_write(UC_M68K_REG_A0, RES); uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA146:                      # GetTrapAddress
+                  assert d0in & 0xFFFF == 0x01A0, hex(d0in); uc.reg_write(UC_M68K_REG_A0, OLDGR)
+              elif op == 0xA047:                      # SetTrapAddress
+                  assert d0in & 0xFFFF == 0x01A0, hex(d0in); st['patched'] = a0in
+              elif op == 0xA126:                      # HandleZone
+                  assert a0in in hz, hex(a0in)
+                  uc.reg_write(UC_M68K_REG_A0, hz[a0in]); uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA9A3:                      # ReleaseResource(h)
+                  h = struct.unpack('>I', uc.mem_read(a7,4))[0]
+                  assert h in hz, hex(h)
+                  st['released'].append(h)
+                  if not stuck: hz[h] = SYSZ          # reloaded with TheZone = SysZone
+                  uc.reg_write(UC_M68K_REG_A7, a7+4)
+              elif op == 0xA1AD:
+                  assert sysver >= 0x0604, 'Gestalt called on System %x (bomb ID 12)' % sysver
+                  sel = struct.pack('>I', d0in)
+                  if not gestalt_ok: uc.reg_write(UC_M68K_REG_D0, (-5551) & 0xFFFFFFFF)
+                  else:
+                      assert sel in (b'mach', b'micn'), sel
+                      uc.reg_write(UC_M68K_REG_A0, (mach if sel==b'mach' else micn) & 0xFFFFFFFF); uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA025:
+                  assert a0in in sizes, hex(a0in)
+                  uc.reg_write(UC_M68K_REG_D0, sizes[a0in])
+              elif op == 0xA024:
+                  assert a0in in (MP, FMP), hex(a0in)
+                  sizes[a0in] = d0in; uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA02E:
+                  s,d,n = a0in,a1in,d0in
+                  assert 0 <= n < 4096
+                  buf = bytes(uc.mem_read(s,n)); uc.mem_write(d,buf)
+                  uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA04A:
+                  assert a0in in sizes; nop.add(a0in)
+                  st['nopurge'] = MP in nop; st['icon_nopurge'] = IMP in nop
+              else: raise Exception('unexpected trap '+hex(op))
+              pc += 2; uc.reg_write(UC_M68K_REG_PC, pc); continue
+          try: uc.emu_start(pc, 0xFFFFFFFF, count=1)
+          except Exception as e: raise Exception("at pc %x op %04x: %s" % (pc-CODE, op, e))
+          pc = uc.reg_read(UC_M68K_REG_PC)
+      return pc
+    execute(CODE, RET)
     assert uc.reg_read(UC_M68K_REG_A7) == STACK, 'stack unbalanced'
     for r,v in regs0.items(): assert uc.reg_read(r) == v, 'register not preserved'
     assert struct.unpack('>I', uc.mem_read(0x118,4))[0] == 0xAAAA0000, 'zone not restored'
+    st['size'] = sizes[MP]
     out = bytes(uc.mem_read(DATA, st['size']))
     guard = bytes(uc.mem_read(DATA+max(st['size'],len(data)), 16))
+    # --- the resident patch: a program calls GetResource after startup and gets a FRESH copy ---
+    st['patch_results'] = []
+    if 'patched' in st:
+        res_base, res_len = st['resident']
+        assert st['patched'] - res_base < res_len, 'patch outside the resident copy'
+        for k in range(calls):
+            for (typ, rid) in ((0x53545223, -16395), (0x49434E23, micn), (0x50494354, 128)):
+                RET2 = 0x7F100; uc.mem_write(RET2, b'\x4e\x71'*4)
+                sp2 = STACK - 0x200
+                frame = struct.pack('>IhII', RET2, rid, typ, 0xCAFEF00D)
+                uc.mem_write(sp2, frame); uc.reg_write(UC_M68K_REG_A7, sp2)
+                for r,v in regs0.items(): uc.reg_write(r, v)
+                execute(st['patched'], RET2)
+                assert uc.reg_read(UC_M68K_REG_A7) == sp2 + 10, 'patch: stack unbalanced'
+                for r,v in regs0.items(): assert uc.reg_read(r) == v, 'patch: register not preserved'
+                h = struct.unpack('>I', uc.mem_read(sp2+10, 4))[0]
+                st['patch_results'].append((typ, h))
+        st['fresh_names'] = parse(bytes(uc.mem_read(FDATA, sizes[FMP])))[0]
+        st['fresh_guard'] = bytes(uc.mem_read(FDATA+max(sizes[FMP], len(data)), 16)) == b'\xEE'*16
+        st['fresh_icon'] = bytes(uc.mem_read(FIDATA, 256))
     st['icon'] = bytes(uc.mem_read(IDATA,256)); st['icon_guard'] = bytes(uc.mem_read(IDATA+256,32)) == b'\xEE'*32; st['old_icon'] = OLDICON
     return parse(out), st, guard, len(data)
 ok = True
@@ -160,4 +221,32 @@ for v in (0x0602, 0x0603):
           '0xa1ad' not in st['traps'] and st['icon'] == st['old_icon'] and names == exp)
 (names, used), st, guard, n0 = run(NAMES, sysver=0x0604)
 check('System 6.0.4: Gestalt used, picture replaced', '0xa1ad' in st['traps'] and st['icon'] == LISA)
+# REV E: the copy GetResource returns may be in the application heap (System 6); it must be released and
+# loaded again into the system heap before it is edited.
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608, app_first=True)
+check('REV E, 6.0.8, list and picture first loaded in the app heap: both released, reloaded, then changed',
+      names == exp and st['icon'] == LISA and st['released'] == [0x30000, 0x30010] and st['nopurge'] and st.get('icon_nopurge'))
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608)
+check('REV E, already in the system heap: nothing released, changed', names == exp and st['icon'] == LISA and st['released'] == [])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608, app_first=True, stuck=True)
+check('REV E, reload still not in the system heap: left alone (name and picture untouched)', names == NAMES and st['icon'] == st['old_icon'])
+# REV E resident patch: after startup a program gets a FRESH copy (System 6 reloads it at each launch)
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608)
+check('REV E patch, 6.0.8: fresh name list renamed (entry 4), twice in a row, nothing past the end',
+      st.get('fresh_names') == exp and st['fresh_guard'] and st['gr_calls'] == 6)
+check('REV E patch: fresh machine picture replaced; other resources passed through untouched',
+      st['fresh_icon'] == LISA and [h for t,h in st['patch_results'] if t == 0x50494354] == [0, 0])
+check('REV E patch: the caller gets the real handle back', [h for t,h in st['patch_results'] if t == 0x53545223] == [0x30020, 0x30020])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0602)
+check('REV E patch, 6.0.2 (no Gestalt): fresh list renamed by the Plus search, picture untouched',
+      st.get('fresh_names') == exp and st['fresh_icon'] == st['old_icon'] and '0xa1ad' not in st['traps'])
+(names, used), st, guard, n0 = run(L75, mach=4)
+check('REV E patch, 7.5.5-style list: entry 4 renamed in the fresh copy', st.get('fresh_names') == L75[:3]+["Macintosh XL"]+L75[4:])
+(names, used), st, guard, n0 = run(NAMES, pin=(342,512))
+check('REV E: real Plus screen: no patch installed', 'patched' not in st and 'resident' not in st)
+(names, used), st, guard, n0 = run(NAMES, have_res=False, have_icon=False)
+check('REV E patch: resources missing: patch passes the nil handle back', [h for t,h in st['patch_results']] == [0]*6)
+(names, used), st, guard, n0 = run(NAMES, gestalt_ok=False)
+check('REV E patch: Gestalt fails: fresh name still renamed (Plus search), picture untouched',
+      st.get('fresh_names') == exp and st['fresh_icon'] == st['old_icon'])
 print('ALL PASS' if ok else 'FAILURES'); sys.exit(0 if ok else 1)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # Builds the "Macintosh XL Name" extension from xlname.bin:
-#   MacintoshXLName_1_0_REVD.bin - MacBinary II file (type INIT)
+#   MacintoshXLName_1_0_REVE.bin - MacBinary II file (type INIT)
 import struct, time, sys
 import os
 TEST = os.environ.get('XL_TEST') in ('1','B')   # XL_TEST=1: test build A, XL_TEST=B: test build B
 TESTB = os.environ.get('XL_TEST') == 'B'
 NAME = b"Macintosh XL Name TEST C" if TESTB else b"Macintosh XL Name TEST" if TEST else b"Macintosh XL Name"
-OUT = 'MacintoshXLName_TEST_C' if TESTB else 'MacintoshXLName_TEST_A' if TEST else 'MacintoshXLName_1_0_REVD'
+OUT = 'MacintoshXLName_TEST_C' if TESTB else 'MacintoshXLName_TEST_A' if TEST else 'MacintoshXLName_1_0_REVE'
 README_MAC = 'README_MAC_TESTC.txt' if TESTB else 'README_MAC_TEST.txt' if TEST else 'README_MAC.txt'
 TYPE, CREATOR = b"INIT", b"XLnm"
 VERS = "1.0"
@@ -19,7 +19,7 @@ def vers(short, long_):
 
 resources = [  # (type, id, attrs, data)
     (b'INIT', 0, 0x50, code),                       # sysHeap + locked
-    (b'vers', 1, 0x00, vers(VERS.encode(), (b"TEST C, not for release - renames any Mac" if TESTB else b"TEST A, not for release - renames any Mac" if TEST else b"1.0 REV D, MacWorks name and icon by GyroPilot"))),
+    (b'vers', 1, 0x00, vers(VERS.encode(), (b"TEST C, not for release - renames any Mac" if TESTB else b"TEST A, not for release - renames any Mac" if TEST else b"1.0 REV E, MacWorks name and icon by GyroPilot"))),
     (b'vers', 2, 0x00, vers(VERS.encode(), b"For Apple Lisa running MacWorks Plus")),
     (b'STR ', -16397, 0x00, pstr(b"This extension makes a Lisa running MacWorks appear as a Macintosh XL, with a Lisa picture. Put it in the Extensions folder and restart.")),
 ]
