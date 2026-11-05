@@ -1,4 +1,10 @@
-| Macintosh XL Name  -  REV C  -  Nov 4 2026  -  GyroPilot
+| Macintosh XL Name  -  REV D  -  Nov 4 2026  -  GyroPilot
+| REV D: renames the entry for this Mac's own model (Gestalt 'mach' index into
+| STR# -16395), not only a "...Plus" entry: System 7.5.x lists every 68K model
+| as plain "Macintosh", so REV C changed nothing on the XL under 7.5.5. The
+| "...Plus" search stays as the fallback when Gestalt is missing (System 6.0.3
+| and older) or the index is past the list. The picture is now replaced on any
+| Lisa screen, whatever model MacWorks reports.
 | REV C: no Gestalt call on System 6.0.3 and older, where the trap does not
 | exist (System error ID 12 at startup on an XL under 6.0.2 / 6.0.3).
 | TEST B (--defsym TESTB=1, linked with glue.s and nbp.c): TEST BUILD plus a
@@ -51,16 +57,15 @@ exit:
 | Rename the "... Plus" entry of STR# -16395 to "Macintosh XL"
 | =====================================================================
 do_name:
-        .ifdef TESTBUILD
+        moveq   #0,%d6                  | d6 = this machine's index, 0 = unknown
         cmpi.w  #0x0604,0x015A.w        | SysVersion: Gestalt came with 6.0.4
-        bcs     done
+        bcs.s   noidx
         move.l  #0x6D616368,%d0         | 'mach'
         .short  0xA1AD                  | _Gestalt
         tst.w   %d0
-        bne     done
-        move.l  %a0,%d6                 | d6 = this machine's index in the list
-        ble     done
-        .endif
+        bne.s   noidx
+        move.l  %a0,%d6
+noidx:
 | --- h = GetResource('STR#', -16395), loaded into the system heap ---
         move.l  0x0118.w,%d7            | save TheZone
         move.l  0x02A6.w,0x0118.w       | TheZone = SysZone
@@ -81,10 +86,12 @@ do_name:
         move.w  (%a0)+,%d3              | number of strings
         ble     done
         moveq   #2,%d4                  | d4 = offset of current string
-        .ifdef TESTBUILD
-        ext.l   %d3
-        cmp.l   %d3,%d6
-        bgt     done                    | no entry for this machine
+        tst.l   %d6
+        ble.s   loop                    | model unknown: look for "...Plus"
+        moveq   #0,%d0
+        move.w  %d3,%d0
+        cmp.l   %d0,%d6
+        bgt.s   loop                    | past the list: look for "...Plus"
 tloop:
         moveq   #0,%d5
         move.b  (%a0),%d5               | d5 = length of current string
@@ -94,7 +101,6 @@ tloop:
         add.w   %d5,%d4
         addq.w  #1,%d4
         bra.s   tloop
-        .endif
 loop:
         moveq   #0,%d5
         move.b  (%a0),%d5               | d5 = its length
@@ -184,14 +190,6 @@ done:
 do_icon:
         cmpi.w  #0x0604,0x015A.w        | SysVersion: Gestalt came with 6.0.4
         bcs.s   idone
-        .ifndef TESTBUILD
-        move.l  #0x6D616368,%d0         | 'mach'
-        .short  0xA1AD                  | _Gestalt
-        tst.w   %d0
-        bne.s   idone
-        cmpa.w  #4,%a0                  | gestaltMacPlus only
-        bne.s   idone
-        .endif
         move.l  #0x6D69636E,%d0         | 'micn' = machine icon family ID
         .short  0xA1AD                  | _Gestalt
         tst.w   %d0

@@ -112,12 +112,26 @@ L = NAMES[:4]
 check('Plus entry last in list', names == L[:3]+["Macintosh XL"] and guard == b'\xEE'*16)
 # 5 short variant name (list must grow)
 L = ["A","Mac Plus","B","CC"]
-(names, used), st, guard, n0 = run(L)
-check('Shorter "Mac Plus" entry (list grows)', names == ["A","Macintosh XL","B","CC"] and st['size']==n0+4 and used==st['size'])
+(names, used), st, guard, n0 = run(L, gestalt_ok=False)
+check('Fallback search: shorter "Mac Plus" entry (list grows)', names == ["A","Macintosh XL","B","CC"] and st['size']==n0+4 and used==st['size'])
 # 6 no Plus entry
 L = ["Macintosh","Macintosh SE","Pl","us"]
-(names, used), st, guard, n0 = run(L)
-check('No Plus entry: untouched', names == L and st['size']==n0)
+(names, used), st, guard, n0 = run(L, gestalt_ok=False)
+check('Fallback search, no Plus entry: untouched', names == L and st['size']==n0)
+# REV D: the entry for this Mac's own model
+L75 = ["Macintosh"]*11 + ["Power Macintosh"] + ["Macintosh"]*8      # System 7.5.5's list
+(names, used), st, guard, n0 = run(L75)
+check('REV D, 7.5.5-style list, mach 4: entry 4 renamed, rest intact', names == L75[:3]+["Macintosh XL"]+L75[4:] and used == st['size'] and guard == b'\xEE'*16)
+(names, used), st, guard, n0 = run(L75, mach=1)
+check('REV D, mach 1: first entry renamed', names == ["Macintosh XL"]+L75[1:])
+(names, used), st, guard, n0 = run(L75, mach=20)
+check('REV D, mach 20 (last entry): renamed', names == L75[:19]+["Macintosh XL"])
+(names, used), st, guard, n0 = run(NAMES, mach=40)
+check('REV D, mach past the list: falls back to the Plus entry', names == exp)
+(names, used), st, guard, n0 = run(L75, mach=40)
+check('REV D, mach past the list, no Plus entry: untouched', names == L75)
+(names, used), st, guard, n0 = run(NAMES, mach=0)
+check('REV D, mach 0: falls back to the Plus entry', names == exp)
 # 7 resource missing
 (names, used), st, guard, n0 = run(NAMES, have_res=False)
 check('Resource missing: clean exit', names == NAMES)
@@ -131,7 +145,7 @@ check('Icon: Plus picture replaced by Lisa A1 (icon + mask, 256 bytes)', st['ico
 (names, used), st, guard, n0 = run(NAMES, pin=(342,512))
 check('Icon: real Plus screen, picture untouched', st['icon'] == st['old_icon'])
 (names, used), st, guard, n0 = run(NAMES, mach=6)
-check('Icon: machine type not Plus, picture untouched', st['icon'] == st['old_icon'] and st['zone_at_icon'] is None)
+check('REV D icon: machine type not Plus, picture still replaced; entry 6 renamed', st['icon'] == LISA and names == NAMES[:5]+["Macintosh XL"]+NAMES[6:])
 (names, used), st, guard, n0 = run(NAMES, gestalt_ok=False)
 check('Icon: Gestalt unavailable, picture untouched, name still changed', st['icon'] == st['old_icon'] and names == exp)
 (names, used), st, guard, n0 = run(NAMES, have_icon=False)
