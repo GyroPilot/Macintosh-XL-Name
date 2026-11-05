@@ -12,7 +12,7 @@ def parse(b):
     for _ in range(n):
         l=b[o]; out.append(b[o+1:o+1+l].decode('mac_roman')); o+=1+l
     return out, o
-def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701, app_first=False, stuck=False, calls=2):
+def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701, app_first=False, stuck=False, calls=2, netname='MacintoshXL7', ctrl_err=(), ticks=(), oldfilter=True):
     uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
     uc.ctl_set_cpu_model(UC_CPU_M68K_M68000)
     uc.mem_map(0, 0x100000)
@@ -40,6 +40,19 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
     sizes = {MP: len(data), IMP: icon_size, FMP: len(data), FIMP: icon_size}
     st['fresh'] = {(0x53545223, -16395): FMP if have_res else 0, (0x49434E23, micn): FIMP if have_icon else 0}
     nop = set()
+    NMP, NDATA, OLDF, FCOUNT = 0x30040, 0x58000, 0x7E100, 0x7E200
+    uc.mem_write(NMP, struct.pack('>I', NDATA if netname is not None else 0))
+    if netname is not None: uc.mem_write(NDATA, bytes([len(netname)]) + netname.encode('mac_roman'))
+    uc.mem_write(OLDF, b'\x52\xB9' + struct.pack('>I', FCOUNT) + b'\x4E\x75')   # addq.l #1,FCOUNT; rts
+    uc.mem_write(FCOUNT, b'\0\0\0\0')
+    uc.mem_write(0x29A, struct.pack('>I', OLDF if oldfilter else 0))
+    uc.mem_write(0x16A, struct.pack('>I', 0))
+    st['ctrl'] = []; st['newptrs'] = []; heap = [0x70000]
+    def ent(addr):
+        out = []; o = addr
+        for _ in range(3):
+            n = uc.mem_read(o, 1)[0]; out.append(bytes(uc.mem_read(o+1, n)).decode('mac_roman')); o += 1+n
+        return tuple(out)
     st['released'] = []
     regs0 = {}
     for i,r in enumerate([UC_M68K_REG_D3,UC_M68K_REG_D4,UC_M68K_REG_D5,UC_M68K_REG_D6,UC_M68K_REG_D7,UC_M68K_REG_A2,UC_M68K_REG_A3,UC_M68K_REG_A4]):
@@ -72,7 +85,10 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
               if op == 0xA9A0:
                   rid, typ = struct.unpack('>hI', uc.mem_read(a7,6))
                   zone = struct.unpack('>I', uc.mem_read(0x118,4))[0]
-                  if typ == 0x53545223:
+                  if typ == 0x53545220:
+                      assert rid == -16413, rid
+                      h = NMP if netname is not None else 0
+                  elif typ == 0x53545223:
                       assert rid == -16395, rid
                       st['zone_at_get'] = zone; h = MP if have_res else 0
                   else:
@@ -86,6 +102,20 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
                   assert d0in & 0xFFFF == 0x01A0, hex(d0in); uc.reg_write(UC_M68K_REG_A0, OLDGR)
               elif op == 0xA047:                      # SetTrapAddress
                   assert d0in & 0xFFFF == 0x01A0, hex(d0in); st['patched'] = a0in
+              elif op == 0xA71E:                      # NewPtrSysClear
+                  a = heap[0]; heap[0] += (d0in + 15) & ~15
+                  uc.mem_write(a, bytes(d0in)); st['newptrs'].append((a, d0in))
+                  uc.reg_write(UC_M68K_REG_A0, a); uc.reg_write(UC_M68K_REG_D0, 0)
+              elif op == 0xA004:                      # Control (.MPP)
+                  ref, cs = struct.unpack('>hh', uc.mem_read(a0in+24, 4))
+                  ptr = struct.unpack('>I', uc.mem_read(a0in+30, 4))[0]
+                  if cs == 253:
+                      rec = ('register', ref, ent(ptr+9), uc.mem_read(ptr+7,1)[0], uc.mem_read(a0in+34,1)[0])
+                  else:
+                      rec = ('remove', ref, ent(ptr))
+                  err = ctrl_err[len(st['ctrl'])] if len(st['ctrl']) < len(ctrl_err) else 0
+                  st['ctrl'].append(rec)
+                  uc.reg_write(UC_M68K_REG_D0, err & 0xFFFF)
               elif op == 0xA126:                      # HandleZone
                   assert a0in in hz, hex(a0in)
                   uc.reg_write(UC_M68K_REG_A0, hz[a0in]); uc.reg_write(UC_M68K_REG_D0, 0)
@@ -149,6 +179,24 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
         st['fresh_names'] = parse(bytes(uc.mem_read(FDATA, sizes[FMP])))[0]
         st['fresh_guard'] = bytes(uc.mem_read(FDATA+max(sizes[FMP], len(data)), 16)) == b'\xEE'*16
         st['fresh_icon'] = bytes(uc.mem_read(FIDATA, 256))
+    # --- REV F: the GetNextEvent filter, called with the clock at each value in ticks ---
+    st['filter'] = struct.unpack('>I', uc.mem_read(0x29A, 4))[0]
+    st['filter_installed'] = st['filter'] not in (OLDF, 0)
+    st['ctrl_at'] = []
+    if st['filter_installed']:
+        for t in ticks:
+            uc.mem_write(0x16A, struct.pack('>I', t))
+            RET3 = 0x7F200; uc.mem_write(RET3, b'\x4e\x71'*4)
+            sp3 = STACK - 0x300; uc.mem_write(sp3, struct.pack('>I', RET3)); uc.reg_write(UC_M68K_REG_A7, sp3)
+            vals = {}
+            for i,r in enumerate([UC_M68K_REG_D0,UC_M68K_REG_D1,UC_M68K_REG_D2,UC_M68K_REG_D3,UC_M68K_REG_D7,UC_M68K_REG_A0,UC_M68K_REG_A1,UC_M68K_REG_A2,UC_M68K_REG_A4]):
+                vals[r] = 0x22220000 + i; uc.reg_write(r, vals[r])
+            n0 = len(st['ctrl'])
+            execute(st['filter'], RET3)
+            assert uc.reg_read(UC_M68K_REG_A7) == sp3 + 4, 'filter: stack unbalanced'
+            for r,v in vals.items(): assert uc.reg_read(r) == v, 'filter: register not preserved'
+            st['ctrl_at'].append(len(st['ctrl']) - n0)
+        st['oldfilter_calls'] = struct.unpack('>I', uc.mem_read(FCOUNT, 4))[0]
     st['icon'] = bytes(uc.mem_read(IDATA,256)); st['icon_guard'] = bytes(uc.mem_read(IDATA+256,32)) == b'\xEE'*32; st['old_icon'] = OLDICON
     return parse(out), st, guard, len(data)
 ok = True
@@ -249,4 +297,31 @@ check('REV E patch: resources missing: patch passes the nil handle back', [h for
 (names, used), st, guard, n0 = run(NAMES, gestalt_ok=False)
 check('REV E patch: Gestalt fails: fresh name still renamed (Plus search), picture untouched',
       st.get('fresh_names') == exp and st['fresh_icon'] == st['old_icon'])
+# REV F: System 7 re-announces the network name 15 s after the desktop is up
+T = (1000, 1500, 1900, 3000, 4000, 9000)
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=T)
+check('REV F, 7.1: filter installed; nothing until 15 s after the first event, then exactly one pass',
+      st['filter_installed'] and st['ctrl_at'] == [0, 0, 2, 0, 0, 0])
+check('REV F: announces MacintoshXL7:Macintosh XL@* on socket 253 via .MPP, no verify',
+      st['ctrl'][0] == ('register', -10, ('MacintoshXL7', 'Macintosh XL', '*'), 253, 0))
+check('REV F: then withdraws MacintoshXL7:Macintosh Plus@*', st['ctrl'][1] == ('remove', -10, ('MacintoshXL7', 'Macintosh Plus', '*')))
+check('REV F: the previous event filter is still called every time', st['oldfilter_calls'] == len(T))
+check('REV F: the names table entry stays allocated (system heap, 108 bytes)', st['newptrs'] == [(0x70000, 108)])
+(names, used), st, guard, n0 = run(L75, mach=4, sysver=0x0755, ticks=T)
+check('REV F, 7.5.5 list: withdraws MacintoshXL7:Macintosh (the 7.5.5 name)', [c[2] for c in st['ctrl']] == [('MacintoshXL7','Macintosh XL','*'), ('MacintoshXL7','Macintosh','*')])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=(1000, 1900, 2800), ctrl_err=(-28,))
+check('REV F: AppleTalk not ready (-28): no withdraw, tries again 15 s later and succeeds',
+      [c[0] for c in st['ctrl']] == ['register', 'register', 'remove'] and st['ctrl_at'] == [0, 1, 2])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=(1000,1900,2800,3700,4600,5500,6400), ctrl_err=(-28,)*9)
+check('REV F: never ready: four tries, then it stops for good', st['ctrl_at'] == [0,1,1,1,1,0,0])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=(1000, 1900), ctrl_err=(-1027,))
+check('REV F: name already registered (-1027) counts as done; old name withdrawn', [c[0] for c in st['ctrl']] == ['register', 'remove'])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=(1000, 1900, 2800), netname=None)
+check('REV F: no Macintosh Name set: nothing announced, nothing allocated, done', st['ctrl'] == [] and st['newptrs'] == [])
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0710, ticks=(1000, 1900), oldfilter=False)
+check('REV F: no previous event filter: still works and returns cleanly', len(st['ctrl']) == 2)
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608, ticks=(1000, 1900))
+check('REV F, System 6.0.8: no event filter installed (Responder already uses the new name)', not st['filter_installed'])
+(names, used), st, guard, n0 = run(NAMES, pin=(342,512), sysver=0x0710, ticks=(1000, 1900))
+check('REV F: real Plus screen: no filter', not st['filter_installed'])
 print('ALL PASS' if ok else 'FAILURES'); sys.exit(0 if ok else 1)

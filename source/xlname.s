@@ -1,4 +1,10 @@
-| Macintosh XL Name  -  REV E  -  Nov 5 2026  -  GyroPilot
+| Macintosh XL Name  -  REV F  -  Nov 5 2026  -  GyroPilot
+| REV F: the network name changes under System 7 too. System 7 announces
+| "<Macintosh Name>:Macintosh Plus" (NBP, socket 253) when AppleTalk starts,
+| before extensions load. On System 7 a GetNextEvent filter waits until 15 s
+| after the desktop is up, announces "<Macintosh Name>:Macintosh XL" on socket
+| 253 and withdraws the old name (the TEST C method, which worked on a real
+| Performa in Oct 2026). Retries every 15 s, at most 4 times, then stops.
 | REV E: stays in memory. Under System 6 the name list (STR# -16395) is
 | read again from the System file each time an application starts, so a
 | one-time edit at startup is lost (the name never changed on 6.0.x, where
@@ -142,18 +148,16 @@ next:
 
 | --- replace it: d4 = offset, d5 = old length ---
 found:
-        .ifdef TESTB
         movem.l %d0/%a0-%a1,-(%sp)      | remember the original name (a0 -> it)
-        lea     oldname(%pc),%a1
+        lea     oldname(%pc),%a1        | for the network re-announce (REV F)
         moveq   #0,%d0
         move.b  (%a0),%d0
-        cmpi.w  #62,%d0
+        cmpi.w  #31,%d0
         bhi.s   nosave
         addq.l  #1,%d0
         .short  0xA02E                  | _BlockMove
 nosave:
         movem.l (%sp)+,%d0/%a0-%a1
-        .endif
         moveq   #NEWLEN,%d6
         sub.l   %d5,%d6                 | d6 = change in size (may be < 0)
         movea.l %a2,%a0
@@ -319,7 +323,145 @@ inst1:  move.l  #codeend-start,%d0
         lea     patch-start(%a3),%a0
         move.w  #0x01A0,%d0
         .short  0xA047                  | _SetTrapAddress
+        cmpi.w  #0x0700,0x015A.w        | System 7 and later: re-announce later
+        bcs.s   instx
+        move.l  0x029A.w,oldfilt-start(%a3)     | JGNEFilter
+        lea     gnefilt-start(%a3),%a0
+        move.l  %a0,0x029A.w
 instx:  rts
+
+| =====================================================================
+| REV F: GetNextEvent filter (System 7): the network re-announce
+| =====================================================================
+gnefilt:
+        movem.l %d0-%d7/%a0-%a4,-(%sp)
+        bsr.s   xltick
+        movem.l (%sp)+,%d0-%d7/%a0-%a4
+        move.l  oldfilt(%pc),-(%sp)
+        beq.s   gnef1
+        rts                             | on to the previous filter
+gnef1:  addq.l  #4,%sp
+        rts
+
+xltick:
+        lea     fstate(%pc),%a2         | 0 clock, 4 tries, 6 done
+        tst.w   6(%a2)
+        bne.s   xret
+        move.l  0x016A.w,%d0            | Ticks
+        tst.l   (%a2)
+        bne.s   xt1
+        bsr.s   setclk                  | first event: start the clock
+        bra.s   xret
+xt1:    sub.l   (%a2),%d0
+        cmpi.l  #900,%d0                | 15 seconds
+        bcs.s   xret
+        move.l  0x016A.w,%d0
+        bsr.s   setclk                  | next try 15 s from now
+        addq.w  #1,4(%a2)
+        cmpi.w  #4,4(%a2)
+        bls.s   xt2
+        move.w  #1,6(%a2)               | four tries: give up
+        bra.s   xret
+xt2:    bsr.s   reannounce
+        tst.l   %d0
+        bne.s   xret
+        move.w  #1,6(%a2)               | done
+xret:   rts
+setclk: move.l  %d0,(%a2)               | clock = Ticks (never 0: 0 means not started)
+        bne.s   sc1
+        addq.l  #1,(%a2)
+sc1:    rts
+
+| reannounce: d0 = 0 when done (or nothing to do), else the error to retry.
+| Keeps a2-a4 (xltick's a2 points at the state).
+reannounce:
+        movem.l %a2-%a4,-(%sp)
+        bsr.s   reann
+        movem.l (%sp)+,%a2-%a4
+        rts
+reann:
+        subq.l  #4,%sp
+        move.l  #0x53545220,-(%sp)      | 'STR '
+        move.w  #-16413,-(%sp)          | Macintosh Name (Sharing Setup)
+        .short  0xA9A0                  | _GetResource
+        move.l  (%sp)+,%d0
+        beq     rnone
+        movea.l %d0,%a0
+        move.l  (%a0),%d0
+        beq     rnone
+        movea.l %d0,%a3                 | a3 = network name
+        moveq   #0,%d1
+        move.b  (%a3),%d1
+        beq     rnone
+        cmpi.w  #32,%d1
+        bhi     rnone
+        lea     oldname(%pc),%a4        | a4 = old model name
+        tst.b   (%a4)
+        beq     rnone
+        moveq   #108,%d0                | names table entry: must stay allocated
+        .short  0xA71E                  | _NewPtrSysClear
+        tst.w   %d0
+        bne     rerr
+        move.b  #253,7(%a0)             | socket 253, as System 7 uses
+        lea     9(%a0),%a1
+        movea.l %a0,%a2                 | a2 = NTE
+        lea     newname(%pc),%a0
+        bsr     packent
+        lea     -56(%sp),%sp            | parameter block (50) on the stack
+        bsr     mpp
+        move.w  #253,26(%sp)            | csCode RegisterName
+        move.b  #2,28(%sp)              | interval
+        move.b  #2,29(%sp)              | count
+        move.l  %a2,30(%sp)             | NTE
+        clr.b   34(%sp)                 | verify: no
+        movea.l %sp,%a0
+        .short  0xA004                  | _Control
+        ext.l   %d0
+        cmpi.l  #-1027,%d0              | nbpDuplicate: already there
+        bne.s   rn1
+        moveq   #0,%d0
+rn1:    tst.l   %d0
+        bne.s   rn2
+        lea     -104(%sp),%sp           | entity buffer for the withdraw
+        movea.l %sp,%a1
+        movea.l %a4,%a0
+        bsr     packent
+        lea     104(%sp),%a0
+        bsr     mpp2
+        move.w  #252,26(%a0)            | csCode RemoveName
+        move.l  %sp,30(%a0)             | entity
+        .short  0xA004                  | _Control (result ignored)
+        lea     104(%sp),%sp
+        moveq   #0,%d0
+rn2:    lea     56(%sp),%sp
+        rts
+rnone:  moveq   #0,%d0
+rerr:   rts
+
+| packent: a1 = destination, a3 = object, a0 = type; writes object:type@*
+packent:
+        moveq   #0,%d1
+        move.b  (%a3),%d1
+        movea.l %a3,%a4
+pk1:    move.b  (%a4)+,(%a1)+
+        dbra    %d1,pk1
+        moveq   #0,%d1
+        move.b  (%a0),%d1
+pk2:    move.b  (%a0)+,(%a1)+
+        dbra    %d1,pk2
+        move.b  #1,(%a1)+
+        move.b  #0x2A,(%a1)+            | '*'
+        lea     oldname(%pc),%a4        | (a4 is the old name again)
+        rts
+
+| mpp: clear the parameter block at 4(sp) (caller's sp) for .MPP
+mpp:    lea     4(%sp),%a0
+mpp2:   moveq   #24,%d1                 | 50 bytes = 25 words
+mp1:    clr.w   (%a0)+
+        dbra    %d1,mp1
+        lea     -50(%a0),%a0
+        move.w  #-10,24(%a0)            | ioCRefNum = .MPP
+        rts
 
 | =====================================================================
 | patch: FUNCTION GetResource(theType: ResType; theID: INTEGER): Handle
@@ -361,16 +503,17 @@ pret:   movea.l (%sp)+,%a0
 
         .even
 oldgr:  .long   0
+oldfilt: .long  0
+fstate: .long   0
+        .short  0, 0
 machv:  .long   0
 micnv:  .short  0
 micnok: .short  0
 
         .equ    NEWLEN,12
-        .ifdef TESTB
         .globl  oldname
 oldname:
-        .space  64
-        .endif
+        .space  32
         .globl  newname
 newname:
         .byte   NEWLEN

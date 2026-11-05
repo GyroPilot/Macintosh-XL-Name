@@ -1,4 +1,4 @@
-Macintosh XL Name 1.0  (REV E, November 5 2026)
+Macintosh XL Name 1.0  (REV F, November 5 2026)
 by GyroPilot - github.com/GyroPilot
 
 WHAT IT DOES
@@ -12,7 +12,7 @@ Drag it out of the Extensions folder and restart. Nothing else is changed.
 
 WHAT IT CHANGES - AND WHAT IT DOES NOT
 - Only the machine NAME and PICTURE are changed, and only in memory. The System file is never modified.
-- It stays in memory (a few hundred bytes) and fixes the name and picture each time a program reads them, because System 6 reads them again from the System file whenever a program starts.
+- It stays in memory (about 1.4K) and fixes the name and picture each time a program reads them, because System 6 reads them again from the System file whenever a program starts.
 - The machine TYPE that installers and compatibility checks read is left alone. Software still sees a Macintosh Plus, exactly as before.
 - It does nothing on a real Macintosh Plus (it only acts when the screen is not the standard 512 x 342).
 
@@ -22,9 +22,9 @@ Apple Lisa / Macintosh XL, MacWorks Plus or MacWorks Plus II, System 6.0.2 to 7.
 THE PICTURE
 The Lisa picture is drawn for the standard Lisa screen, where dots are taller than they are wide. On a Lisa with the square-dot screen kit it will look flattened.
 
-IF THE NETWORK NAME DOES NOT CHANGE
-Check About This Macintosh first. If it says "Macintosh XL" the extension is working, and the network name was registered before the extension loaded. Please report this, with your System version, at github.com/GyroPilot.
+THE NETWORK NAME
+Other Macs (and network scanners such as GlobalTalk Sherpa) see this Lisa as "<your Macintosh Name>: Macintosh XL". Under System 7 that takes about 15 seconds after the desktop appears: System 7 announces the old name before extensions load, so the extension announces the new one and withdraws the old one once the desktop is up. Under System 6 it is right from the start. If the network name does not change, check About This Macintosh first; if it says "Macintosh XL" the extension is working. Please report it, with your System version, at github.com/GyroPilot.
 
-REV E makes the name change under System 6 (the network name too) and makes the picture change at all: earlier versions changed a copy that System 6 threw away, and the picture never changed anywhere. REV D changes the name on System 7.5 too: it renames the entry for the model MacWorks reports, not only a "...Plus" entry (7.5 lists every 68K model as plain "Macintosh", so REV C changed nothing there). REV C fixes a startup crash (System error ID 12) on a Lisa running System 6.0.2 or 6.0.3. REV B adds the Lisa picture. REV A changed the name only.
+REV F makes the network name change under System 7 too. REV E makes the name change under System 6 (the network name too) and makes the picture change at all: earlier versions changed a copy that System 6 threw away, and the picture never changed anywhere. REV D changes the name on System 7.5 too: it renames the entry for the model MacWorks reports, not only a "...Plus" entry (7.5 lists every 68K model as plain "Macintosh", so REV C changed nothing there). REV C fixes a startup crash (System error ID 12) on a Lisa running System 6.0.2 or 6.0.3. REV B adds the Lisa picture. REV A changed the name only.
 
-Tested in a 68000 emulator: the name reads "Macintosh XL" under System 6.0.8, 7.1 and 7.5.5, and the Lisa picture shows under 7.1 and 7.5.5 (System 6 has no machine picture); System 6.0.2 starts up normally. On a real Lisa 2/10 (MacWorks, System 6.0.8, EtherTalk) REV E works: the Lisa shows on the network as "Macintosh XL" (5 Nov 2026). REV C loaded without trouble on a real Macintosh XL under System 7.5.5; REV E on System 7 on real hardware is next.
+Tested in a 68000 emulator: the name reads "Macintosh XL" under System 6.0.8, 7.1 and 7.5.5, and the Lisa picture shows under 7.1 and 7.5.5 (System 6 has no machine picture); System 6.0.2 starts up normally. On a real Lisa 2/10 (MacWorks, EtherTalk) REV E works: under System 6.0.8 the Lisa shows on the network as "Macintosh XL", and under System 7.1 About This Macintosh shows "Macintosh XL" with the Lisa picture (5 Nov 2026). REV F's System 7 network announcement is tested in emulators (System 7.1 and 7.6.1) and waits for a real Lisa.
