@@ -12,7 +12,7 @@ def parse(b):
     for _ in range(n):
         l=b[o]; out.append(b[o+1:o+1+l].decode('mac_roman')); o+=1+l
     return out, o
-def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701, app_first=False, stuck=False, calls=2, netname='MacintoshXL7', ctrl_err=(), ticks=(), oldfilter=True):
+def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True, icon_size=256, gestalt_ok=True, sysver=0x0701, app_first=False, stuck=False, calls=2, netname='MacintoshXL7', ctrl_err=(), ticks=(), oldfilter=True, xrow=None):
     uc = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
     uc.ctl_set_cpu_model(UC_CPU_M68K_M68000)
     uc.mem_map(0, 0x100000)
@@ -20,6 +20,8 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
     uc.mem_write(CODE, code)
     uc.mem_write(RET, b'\x4e\x71'*4)
     uc.mem_write(0x838, struct.pack('>HH', *pin))
+    if xrow is not None: uc.mem_write(0x92C, struct.pack('>HH', xrow, (((xrow << 1) | (xrow >> 15)) & 0xFFFF) ^ 0x1021))
+    else: uc.mem_write(0x92C, struct.pack('>HH', 0x1234, 0x9999))   # garbage: no extension has drawn yet
     uc.mem_write(0x15A, struct.pack('>H', sysver))       # SysVersion
     uc.mem_write(0x118, struct.pack('>I', 0xAAAA0000))   # TheZone (app)
     uc.mem_write(0x2A6, struct.pack('>I', 0x00002000))   # SysZone
@@ -55,7 +57,7 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
         return tuple(out)
     st['released'] = []
     regs0 = {}
-    for i,r in enumerate([UC_M68K_REG_D3,UC_M68K_REG_D4,UC_M68K_REG_D5,UC_M68K_REG_D6,UC_M68K_REG_D7,UC_M68K_REG_A2,UC_M68K_REG_A3,UC_M68K_REG_A4]):
+    for i,r in enumerate([UC_M68K_REG_D3,UC_M68K_REG_D4,UC_M68K_REG_D5,UC_M68K_REG_D6,UC_M68K_REG_D7,UC_M68K_REG_A2,UC_M68K_REG_A3,UC_M68K_REG_A4,UC_M68K_REG_A5,UC_M68K_REG_A6]):
         uc.reg_write(r, 0x11110000+i); regs0[r]=0x11110000+i
     sp = STACK - 4
     uc.mem_write(sp, struct.pack('>I', RET))
@@ -146,6 +148,24 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
               elif op == 0xA04A:
                   assert a0in in sizes; nop.add(a0in)
                   st['nopurge'] = MP in nop; st['icon_nopurge'] = IMP in nop
+              elif op == 0xA86E:                      # InitGraf(@thePort): (A5) := that address
+                  g = struct.unpack('>I', uc.mem_read(a7,4))[0]
+                  a5 = uc.reg_read(UC_M68K_REG_A5); assert g == a5 - 4, 'InitGraf: thePort not just below A5'
+                  st['a5_draw'] = a5; uc.mem_write(a5, struct.pack('>I', g)); uc.reg_write(UC_M68K_REG_A7, a7+4)
+              elif op == 0xA86F:                      # OpenPort(port): portRect = the screen
+                  gp = struct.unpack('>I', uc.mem_read(a7,4))[0]
+                  uc.mem_write(gp+16, struct.pack('>hhhh', 0, 0, pin[0], pin[1])); st['port'] = gp
+                  uc.reg_write(UC_M68K_REG_A7, a7+4)
+              elif op == 0xA817:                      # CopyMask(src, mask, dst, srcRect, maskRect, dstRect)
+                  dr, mr, sr, dst, msk, src = struct.unpack('>6I', uc.mem_read(a7,24))
+                  assert dst == st['port'] + 2, 'CopyMask not to the port bits'
+                  sb = struct.unpack('>IHhhhh', uc.mem_read(src,14)); mb = struct.unpack('>IHhhhh', uc.mem_read(msk,14))
+                  st['showicon'] = dict(rect=struct.unpack('>hhhh', uc.mem_read(dr,8)), src=sb, mask=mb,
+                                        icon=bytes(uc.mem_read(sb[0],128)), maskbits=bytes(uc.mem_read(mb[0],128)),
+                                        sr=struct.unpack('>hhhh', uc.mem_read(sr,8)))
+                  uc.reg_write(UC_M68K_REG_A7, a7+24)
+              elif op == 0xA87D:                      # ClosePort
+                  uc.reg_write(UC_M68K_REG_A7, a7+4); st['closed'] = True
               else: raise Exception('unexpected trap '+hex(op))
               pc += 2; uc.reg_write(UC_M68K_REG_PC, pc); continue
           try: uc.emu_start(pc, 0xFFFFFFFF, count=1)
@@ -198,6 +218,7 @@ def run(names, pin=(364,720), have_res=True, mach=4, micn=-16482, have_icon=True
             st['ctrl_at'].append(len(st['ctrl']) - n0)
         st['oldfilter_calls'] = struct.unpack('>I', uc.mem_read(FCOUNT, 4))[0]
     st['icon'] = bytes(uc.mem_read(IDATA,256)); st['icon_guard'] = bytes(uc.mem_read(IDATA+256,32)) == b'\xEE'*32; st['old_icon'] = OLDICON
+    st['row'] = struct.unpack('>HH', uc.mem_read(0x92C, 4))
     return parse(out), st, guard, len(data)
 ok = True
 def check(label, cond):
@@ -324,4 +345,20 @@ check('REV F: no previous event filter: still works and returns cleanly', len(st
 check('REV F, System 6.0.8: no event filter installed (Responder already uses the new name)', not st['filter_installed'])
 (names, used), st, guard, n0 = run(NAMES, pin=(342,512), sysver=0x0710, ticks=(1000, 1900))
 check('REV F: real Plus screen: no filter', not st['filter_installed'])
+
+# ---- 1.1: the Lisa icon in the startup row (ShowINIT convention, words at 0x92C/0x92E) ----
+def rowok(x): return (((x << 1) | (x >> 15)) & 0xFFFF) ^ 0x1021
+(names, used), st, guard, n0 = run(NAMES)
+si = st.get('showicon')
+check('1.1: Lisa 720x364, first icon: at x 8, 40 up from the bottom (324,8,356,40)', si is not None and si['rect'] == (324, 8, 356, 40))
+check('1.1: next x 48 with a valid check word; port closed; A5 restored', st['row'] == (48, rowok(48)) and st.get('closed'))
+check('1.1: icon and mask are the Lisa ICN# (32x32, rowBytes 4)', si['src'][1:] == (4,0,0,32,32) and si['mask'][1:] == (4,0,0,32,32) and si['sr'] == (0,0,32,32) and any(si['maskbits']))
+(names, used), st, guard, n0 = run(NAMES, xrow=128)
+check('1.1: after other extensions (x 128): drawn at 128, next 168', st['showicon']['rect'] == (324,128,356,160) and st['row'] == (168, rowok(168)))
+(names, used), st, guard, n0 = run(NAMES, xrow=700)
+check('1.1: past the right edge: back to x 8', st['showicon']['rect'][1] == 8 and st['row'][0] == 48)
+(names, used), st, guard, n0 = run(NAMES, pin=(342,512))
+check('1.1: real Plus screen: no icon, row words untouched', 'showicon' not in st and st['row'] == (0x1234, 0x9999))
+(names, used), st, guard, n0 = run(NAMES, sysver=0x0608)
+check('1.1: System 6.0.8 on a Lisa: icon drawn', st.get('showicon') is not None)
 print('ALL PASS' if ok else 'FAILURES'); sys.exit(0 if ok else 1)

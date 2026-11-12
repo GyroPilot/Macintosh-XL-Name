@@ -1,18 +1,24 @@
-# Macintosh XL Name 1.0 (REV F, 5 Nov 2026)
+# Macintosh XL Name 1.1 (12 Nov 2026)
 
 An extension for an Apple Lisa (Macintosh XL) running MacWorks Plus or MacWorks Plus II.
 MacWorks runs Macintosh Plus ROM code, so the System calls the machine a
 "Macintosh Plus" (System 7.1) or just "Macintosh" (System 7.5), on the network and in
 About This Macintosh. This extension changes the name to **Macintosh XL** and replaces
-the compact-Mac picture with a Lisa.
+the compact-Mac picture with a Lisa. Version 1.1 also shows a small Lisa icon in the
+row of extension icons at startup.
 
 Works under System 6.0.2 to 7.5.5. Tested on a real Lisa 2/10: under System 6.0.8 it
 shows on the network as "Macintosh XL"; under System 7.1 About This Macintosh shows
 "Macintosh XL" with the Lisa picture, and the network name changes too (Asante EN/SC).
+Version 1.1 was used from 8 to 11 Nov 2026 on a Lisa with a 16 MHz XLerator (System 7.5.5,
+MacWorks Plus II 2.5.3): the startup icon shows first in the row. One System error (ID 15,
+in the Finder) happened about a minute after the very first startup with it; it has not
+happened again and its cause was not found. The startup icon has not yet been tried on a
+real Lisa under System 6 or 7.1.
 
 ## Download
 
-The release disk is on the [Releases page](../../releases): `MacintoshXLName_1_0_REVF.dc42`
+The release disk is on the [Releases page](../../releases): `MacintoshXLName_1_1.dc42`
 (400K Disk Copy 4.2, for the Lisa), `.dsk` (raw image) and `.bin` (MacBinary II).
 
 ## Install / remove
@@ -33,6 +39,13 @@ To remove it, drag it out and restart.
   still see a Macintosh Plus.
 - It does nothing on a real Macintosh Plus (it acts only when the screen is not 512 x 342).
 
+## The startup icon
+
+At startup the Lisa icon is drawn in the row of extension icons at the bottom of the
+screen, following the usual convention (the next position is kept in low memory at
+$92C, with a check word at $92E), so other extensions' icons line up after it. It is
+drawn only on a Lisa screen. The drawing code is not kept in memory afterwards.
+
 ## The network name
 
 Other Macs see the Lisa as "<Macintosh Name>: Macintosh XL". Under System 7 that takes
@@ -47,6 +60,7 @@ square-dot screen kit it looks flattened.
 
 ## History
 
+- **1.1**: adds the startup icon. The name, picture and network code is REV F's, unchanged.
 - **REV F**: the network name changes under System 7 too.
 - **REV E**: stays resident; the name changes under System 6 (and the network name with it), and the picture changes at all.
 - **REV D**: renames this Mac's own model entry, so the name changes under System 7.5.
@@ -58,7 +72,7 @@ square-dot screen kit it looks flattened.
 
 | File | What it is |
 |---|---|
-| `MacintoshXLName_1_0_REVF.dc42` / `.dsk` / `.bin` | The release (earlier revisions beside it). |
+| `MacintoshXLName_1_1.dc42` / `.dsk` / `.bin` | The release (earlier revisions beside it). |
 | `source/` | `xlname.s` (68000 assembly), `glue.s`, `nbp.c`, `build.py`, `test_emu.py`, `README_MAC.txt` (the Read Me on the disk). |
 | `test/` | Test builds A to C. |
 | `icon/` | The Lisa icon: PNG, mask, pixel grid, icon data, drawing scripts. |
@@ -70,7 +84,7 @@ the six Toolbox calls it makes stubbed out. Cases: Lisa 720 x 364, Lisa
 608 x 431, real Plus screen, Plus entry last in the list, a shorter "Mac Plus"
 entry, no Plus entry, list missing, empty list; and for the picture: replaced on a
 Lisa, untouched on a real Plus screen, untouched when the machine type is not
-Plus, Gestalt unavailable, picture missing, picture too small; System 6.0.2 and 6.0.3 (no Gestalt call), 6.0.4 (Gestalt used). All pass; registers, stack and
+Plus, Gestalt unavailable, picture missing, picture too small; System 6.0.2 and 6.0.3 (no Gestalt call), 6.0.4 (Gestalt used); and for the startup icon: drawn on both Lisa screens, placed after other extensions' icons, wrapped past the right edge, not drawn on a real Plus screen. All pass; registers, stack and
 the memory zone are restored and nothing is written past the list.
 
 ## Build

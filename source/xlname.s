@@ -62,6 +62,7 @@ go:
         bsr.s   do_name
         bsr     do_icon
         bsr     install
+        bsr     show_icon               | 1.1: the Lisa icon in the startup row
         .ifdef TESTB
         bsr     xl_init                 | network re-announce and log (C code)
         .endif
@@ -592,3 +593,89 @@ lisaicon:
         .long   0x00000000
         .endif
 codeend:
+
+| =====================================================================
+| 1.1 (7 Nov 2026): show the Lisa icon at the bottom of the startup screen, in the row other extensions use
+| (the "ShowINIT" convention: the next free x is the word at 0x92C, checked by the word at 0x92E =
+| (x rotated left 1) XOR 0x1021; icons are 32x32, 40 apart, 8 from the left, 40 up from the bottom).
+| Only called on a Lisa screen; runs once at startup and is NOT copied into the system heap (after codeend).
+| Draws with its own QuickDraw globals and GrafPort on the stack; A5 is put back before returning.
+| Frame: -4 the A5 slot, -210..-5 QuickDraw globals (thePort at -8), -318 GrafPort (108),
+|        -332 source BitMap, -346 mask BitMap, -354 icon rect, -362 screen rect.
+| =====================================================================
+        .set    SI_A5,   -4
+        .set    SI_PORT, -8
+        .set    SI_GP,   -318
+        .set    SI_SRC,  -332
+        .set    SI_MSK,  -346
+        .set    SI_IR,   -354
+        .set    SI_DR,   -362
+show_icon:
+        link    %a6,#-364
+        movem.l %d0-%d7/%a0-%a5,-(%sp)
+        movea.l %a5,%a4                 | a4 = old A5
+        lea     SI_A5(%a6),%a5          | our own QuickDraw globals
+        pea     SI_PORT(%a6)
+        .short  0xA86E                  | _InitGraf
+        pea     SI_GP(%a6)
+        .short  0xA86F                  | _OpenPort (portRect = the whole screen)
+| --- x: the next free place in the row, or 8 when nobody has set it ---
+        move.w  0x092C.w,%d0
+        move.w  %d0,%d1
+        rol.w   #1,%d1
+        eori.w  #0x1021,%d1
+        cmp.w   0x092E.w,%d1
+        beq.s   si_x
+        moveq   #8,%d0
+si_x:   move.w  SI_GP+16+6(%a6),%d2     | portRect.right
+        move.w  %d0,%d1
+        addi.w  #32,%d1
+        cmp.w   %d2,%d1
+        ble.s   si_fit
+        moveq   #8,%d0                  | past the right edge: back to the start of the row
+si_fit:
+| --- dest rect: top = bottom - 40 ---
+        move.w  SI_GP+16+4(%a6),%d1     | portRect.bottom
+        subi.w  #40,%d1
+        move.w  %d1,SI_DR(%a6)          | top
+        move.w  %d0,SI_DR+2(%a6)        | left
+        addi.w  #32,%d1
+        move.w  %d1,SI_DR+4(%a6)        | bottom
+        move.w  %d0,%d1
+        addi.w  #32,%d1
+        move.w  %d1,SI_DR+6(%a6)        | right
+| --- the next x for the extension after us, with its check word ---
+        move.w  %d0,%d1
+        addi.w  #40,%d1
+        move.w  %d1,0x092C.w
+        rol.w   #1,%d1
+        eori.w  #0x1021,%d1
+        move.w  %d1,0x092E.w
+| --- source and mask: lisaicon is an ICN# (icon, then mask), 32x32, 4 bytes a row ---
+        lea     lisaicon(%pc),%a0
+        move.l  %a0,SI_SRC(%a6)
+        lea     128(%a0),%a0
+        move.l  %a0,SI_MSK(%a6)
+        move.w  #4,SI_SRC+4(%a6)
+        move.w  #4,SI_MSK+4(%a6)
+        clr.l   SI_IR(%a6)              | icon rect 0,0,32,32
+        move.l  #0x00200020,SI_IR+4(%a6)
+        clr.l   SI_SRC+6(%a6)
+        move.l  #0x00200020,SI_SRC+10(%a6)
+        clr.l   SI_MSK+6(%a6)
+        move.l  #0x00200020,SI_MSK+10(%a6)
+| --- CopyMask(src, mask, dst, srcRect, maskRect, dstRect) ---
+        pea     SI_SRC(%a6)
+        pea     SI_MSK(%a6)
+        pea     SI_GP+2(%a6)            | the port's portBits = the screen
+        pea     SI_IR(%a6)
+        pea     SI_IR(%a6)
+        pea     SI_DR(%a6)
+        .short  0xA817                  | _CopyMask
+        pea     SI_GP(%a6)
+        .short  0xA87D                  | _ClosePort
+        movea.l %a4,%a5
+        movem.l (%sp)+,%d0-%d7/%a0-%a5
+        unlk    %a6
+        rts
+
